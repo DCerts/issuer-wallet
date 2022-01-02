@@ -1,0 +1,12 @@
+{
+    "notes": [
+        "The below addresses are for testing purposes only.",
+        "Please use your own production addresses."
+    ],
+    "members": [
+        "0x2b84D3031a117312B99B429E7904Cd7ECBae40a3",
+        "0xE52E8dE016591302d9Be0fbD93EA7e4b21a910b8"
+    ],
+    "threshold": 2,
+    "address": "0x7c6B55355C805781E3e18A17d7f46D4E3BBa6CA0"
+}
