@@ -30,6 +30,7 @@ contract MultiSigWallet {
     }
 
     Certs holder;
+    string schoolName;
     address[] members;
     uint threshold;
 
@@ -38,13 +39,11 @@ contract MultiSigWallet {
     mapping(uint => Cert) certs; // certId => cert
     mapping(uint => bool) certExecuted; // certId => executed
     mapping(uint => mapping(uint => mapping(address => bool))) certConfirmed; // groupId => certId => member => confirmed
-    
+
     mapping(uint => uint[]) batches; // batchId => [certIds]
     mapping(uint => bool) batchExecuted; // batchId => executed
     mapping(uint => mapping(uint => mapping(address => bool))) batchConfirmed; // groupId => batchId => member => confirmed
 
-    uint certCount = 0;
-    uint groupCount = 0;
     uint batchCount = 0;
 
     function isMember(address _member) public view returns (bool) {
@@ -55,7 +54,7 @@ contract MultiSigWallet {
         }
         return false;
     }
-    
+
     function isMemberOfGroup(address _member, uint _groupId) public view returns (bool) {
         if (groups[_groupId].members.length == 0) {
             return false;
@@ -79,9 +78,14 @@ contract MultiSigWallet {
         _;
     }
 
-    event CertsAddressInitialized(address _holder);
+    event WalletActivated(
+        string schoolName,
+        address[] members,
+        uint threshold,
+        address certsAddress
+    );
 
-    event GroupWaitingForConfirmation(
+    event GroupPending(
         address creator,
         uint groupId,
         string name,
@@ -101,7 +105,7 @@ contract MultiSigWallet {
         uint threshold
     );
 
-    event CertWaitingForConfirmation(
+    event CertPending(
         address creator,
         uint certId,
         address schoolId,
@@ -129,7 +133,7 @@ contract MultiSigWallet {
         uint batchId
     );
 
-    event BatchWaitingForConfirmation(
+    event BatchPending(
         address creator,
         uint batchId,
         uint[] certIds
@@ -145,7 +149,7 @@ contract MultiSigWallet {
         uint[] certIds
     );
 
-    event Deposit(address _from, uint _value);
+    event Deposit(address from, uint value);
 
     fallback() external payable {
         if (msg.value > 0) {
@@ -159,14 +163,15 @@ contract MultiSigWallet {
         }
     }
 
-    constructor(address[] memory _members, uint _threshold, address _address) {
+    constructor(string memory _name, address[] memory _members, uint _threshold, address _address) {
         require(_members.length > 0);
         require(_threshold > 0);
         require(_threshold <= _members.length);
+        schoolName = _name;
         members = _members;
         threshold = _threshold;
         holder = Certs(_address);
-        emit CertsAddressInitialized(_address);
+        emit WalletActivated(_name, _members, _threshold, _address);
     }
 
     function isGroupConfirmed(uint _groupId) private view returns (bool) {
@@ -179,11 +184,11 @@ contract MultiSigWallet {
         return confirmedCount >= threshold;
     }
 
-    function addGroup(string memory _name, address[] memory _members, uint _threshold) onlyMembers public returns (uint) {
+    function addGroup(uint _groupId, string memory _name, address[] memory _members, uint _threshold) onlyMembers public returns (uint) {
         require(_members.length > 0);
         require(_threshold > 0);
         require(_threshold <= _members.length);
-        uint groupId = groupCount++;
+        uint groupId = _groupId;
         Group memory group = Group({
             id: groupId,
             name: _name,
@@ -193,7 +198,7 @@ contract MultiSigWallet {
         });
         group.confirmedBy[0] = msg.sender;
         groups[groupId] = group;
-        emit GroupWaitingForConfirmation(msg.sender, groupId, _name, _members, _threshold);
+        emit GroupPending(msg.sender, groupId, _name, _members, _threshold);
         emit GroupConfirmed(msg.sender, groupId);
         return groupId;
     }
@@ -223,7 +228,6 @@ contract MultiSigWallet {
     }
 
     function getGroup(uint _groupId) public view returns (Group memory) {
-        require(_groupId < groupCount);
         return groups[_groupId];
     }
 
@@ -264,12 +268,10 @@ contract MultiSigWallet {
     }
 
     function submitCert(uint _groupId, Cert memory _cert) onlyGroup(_groupId) public returns (uint) {
-        uint certId = certCount++;
-        _cert.id = certId;
-        certs[certId] = _cert;
-        emit CertWaitingForConfirmation(
+        certs[_cert.id] = _cert;
+        emit CertPending(
             msg.sender,
-            certId,
+            _cert.id,
             _cert.schoolId,
             _cert.studentId,
             _cert.subjectId,
@@ -278,20 +280,19 @@ contract MultiSigWallet {
             _cert.gradeType,
             _cert.batchId
         );
-        confirmCert(_groupId, certId);
-        return certId;
+        confirmCert(_groupId, _cert.id);
+        return _cert.id;
     }
 
     function submitBatch(uint _groupId, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
         uint batchId = batchCount++;
         batches[batchId] = new uint[](_certs.length);
         for (uint i = 0; i < _certs.length; i++) {
-            uint certId = certCount++;
-            _certs[i].id = certId;
+            uint certId = _certs[i].id;
             certs[certId] = _certs[i];
             batches[batchId][i] = certId;
         }
-        emit BatchWaitingForConfirmation(
+        emit BatchPending(
             msg.sender,
             batchId,
             batches[batchId]
@@ -313,6 +314,7 @@ contract MultiSigWallet {
         for (uint i = 0; i < batches[_batchId].length; i++) {
             uint certId = batches[_batchId][i];
             certConfirmed[_groupId][certId][msg.sender] = true;
+            emit CertConfirmed(msg.sender, certId);
         }
         emit BatchConfirmed(msg.sender, _batchId);
         executeBatch(_groupId, _batchId);
@@ -322,17 +324,18 @@ contract MultiSigWallet {
         require(certExecuted[_certId] == false);
         require(isCertConfirmed(_groupId, _certId));
         certs[_certId].issuers = getCertConfirmers(_groupId, _certId);
-        holder.addCert(certs[_certId]);
+        Cert memory cert = certs[_certId];
+        holder.addCert(cert);
         certExecuted[_certId] = true;
         emit CertAdded(
-            _certId,
-            certs[_certId].schoolId,
-            certs[_certId].studentId,
-            certs[_certId].subjectId,
-            certs[_certId].semester,
-            certs[_certId].grade,
-            certs[_certId].gradeType,
-            certs[_certId].batchId
+            cert.id,
+            cert.schoolId,
+            cert.studentId,
+            cert.subjectId,
+            cert.semester,
+            cert.grade,
+            cert.gradeType,
+            cert.batchId
         );
     }
 
@@ -348,6 +351,19 @@ contract MultiSigWallet {
         }
         holder.addCerts(batchCerts);
         batchExecuted[_batchId] = true;
+        for (uint i = 0; i < batchCerts.length; i++) {
+            Cert memory cert = batchCerts[i];
+            emit CertAdded(
+                cert.id,
+                cert.schoolId,
+                cert.studentId,
+                cert.subjectId,
+                cert.semester,
+                cert.grade,
+                cert.gradeType,
+                cert.batchId
+            );
+        }
         emit BatchAdded(
             _batchId,
             batches[_batchId]
