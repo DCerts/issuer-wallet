@@ -188,6 +188,7 @@ contract MultiSigWallet {
         require(_members.length > 0);
         require(_threshold > 0);
         require(_threshold <= _members.length);
+        require(groups[_groupId].id == 0);
         uint groupId = _groupId;
         Group memory group = Group({
             id: groupId,
@@ -206,16 +207,16 @@ contract MultiSigWallet {
     function confirmGroup(uint _groupId) onlyMembers public {
         require(isGroupConfirmed(_groupId) == false);
         address[] memory groupConfirmers = groups[_groupId].confirmedBy;
-        uint confirmedCount = 0;
+        uint confirmerCount = 0;
         for (uint i = 0; i < groupConfirmers.length; i++) {
             if (groupConfirmers[i] == msg.sender) {
-                return;
+                require(false);
             }
             if (groupConfirmers[i] != address(0)) {
-                confirmedCount++;
+                confirmerCount++;
             }
         }
-        groups[_groupId].confirmedBy[confirmedCount] = msg.sender;
+        groups[_groupId].confirmedBy[confirmerCount] = msg.sender;
         emit GroupConfirmed(msg.sender, _groupId);
         if (isGroupConfirmed(_groupId)) {
             emit GroupAdded(
