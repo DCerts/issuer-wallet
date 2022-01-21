@@ -45,6 +45,7 @@ contract MultiSigWallet {
     mapping(uint => mapping(uint => mapping(address => bool))) batchConfirmed; // groupId => batchId => member => confirmed
 
     uint batchCount = 0;
+    uint groupCount = 0;
 
     function isMember(address _member) public view returns (bool) {
         for (uint i = 0; i < members.length; i++) {
@@ -184,12 +185,11 @@ contract MultiSigWallet {
         return confirmedCount >= threshold;
     }
 
-    function addGroup(uint _groupId, string memory _name, address[] memory _members, uint _threshold) onlyMembers public returns (uint) {
+    function addGroup(string memory _name, address[] memory _members, uint _threshold) onlyMembers public returns (uint) {
         require(_members.length > 0);
         require(_threshold > 0);
         require(_threshold <= _members.length);
-        require(groups[_groupId].id == 0);
-        uint groupId = _groupId;
+        uint groupId = groupCount++;
         Group memory group = Group({
             id: groupId,
             name: _name,
