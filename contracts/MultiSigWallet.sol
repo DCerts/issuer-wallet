@@ -44,6 +44,7 @@ contract MultiSigWallet {
     mapping(uint => bool) batchExecuted; // batchId => executed
     mapping(uint => mapping(uint => mapping(address => bool))) batchConfirmed; // groupId => batchId => member => confirmed
 
+    uint certCount = 0;
     uint batchCount = 0;
     uint groupCount = 0;
 
@@ -136,8 +137,10 @@ contract MultiSigWallet {
 
     event BatchPending(
         address creator,
+        uint groupId,
         uint batchId,
-        uint[] certIds
+        string name,
+        Cert[] certs
     );
 
     event BatchConfirmed(
@@ -269,6 +272,7 @@ contract MultiSigWallet {
     }
 
     function submitCert(uint _groupId, Cert memory _cert) onlyGroup(_groupId) public returns (uint) {
+        _cert.id = certCount++;
         certs[_cert.id] = _cert;
         emit CertPending(
             msg.sender,
@@ -285,18 +289,21 @@ contract MultiSigWallet {
         return _cert.id;
     }
 
-    function submitBatch(uint _groupId, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
+    function submitBatch(uint _groupId, string memory _batchName, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
         uint batchId = batchCount++;
         batches[batchId] = new uint[](_certs.length);
         for (uint i = 0; i < _certs.length; i++) {
+            _certs[i].id = certCount++;
             uint certId = _certs[i].id;
             certs[certId] = _certs[i];
             batches[batchId][i] = certId;
         }
         emit BatchPending(
             msg.sender,
+            _groupId,
             batchId,
-            batches[batchId]
+            _batchName,
+            _certs
         );
         confirmBatch(_groupId, batchId);
         return batchId;
