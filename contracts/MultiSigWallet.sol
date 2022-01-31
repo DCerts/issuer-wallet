@@ -5,13 +5,18 @@ pragma solidity >=0.4.22 <0.9.0;
 struct Cert {
     uint id;
     address schoolId;
-    string studentId;
-    string subjectId;
-    address[] issuers;
-    string semester;
-    string grade;
-    string gradeType;
+    string regNo;
     uint batchId;
+    string conferredOn;
+    string dateOfBirth;
+    string yearOfGraduation;
+    string majorIn;
+    string degreeOf;
+    string degreeClassification;
+    string modeOfStudy;
+    string createdIn;
+    string createdAt;
+    address[] issuers;
 }
 
 interface Certs {
@@ -29,6 +34,11 @@ contract MultiSigWallet {
         address[] confirmedBy;
     }
 
+    struct Batch {
+        uint id;
+        string name;
+    }
+
     Certs holder;
     string schoolName;
     address[] members;
@@ -36,11 +46,12 @@ contract MultiSigWallet {
 
     mapping(uint => Group) groups;
 
+    mapping(uint => Batch) batches; // batchId => batchName
     mapping(uint => Cert) certs; // certId => cert
     mapping(uint => bool) certExecuted; // certId => executed
     mapping(uint => mapping(uint => mapping(address => bool))) certConfirmed; // groupId => certId => member => confirmed
 
-    mapping(uint => uint[]) batches; // batchId => [certIds]
+    mapping(uint => uint[]) batchCerts; // batchId => [certIds]
     mapping(uint => bool) batchExecuted; // batchId => executed
     mapping(uint => mapping(uint => mapping(address => bool))) batchConfirmed; // groupId => batchId => member => confirmed
 
@@ -110,28 +121,20 @@ contract MultiSigWallet {
     event CertPending(
         address creator,
         uint certId,
-        address schoolId,
-        string studentId,
-        string subjectId,
-        string semester,
-        string grade,
-        string gradeType,
+        string regNo,
         uint batchId
     );
 
     event CertConfirmed(
         address confirmer,
-        uint certId
+        uint certId,
+        string regNo,
+        uint batchId
     );
 
     event CertAdded(
         uint certId,
-        address schoolId,
-        string studentId,
-        string subjectId,
-        string semester,
-        string grade,
-        string gradeType,
+        string regNo,
         uint batchId
     );
 
@@ -139,17 +142,19 @@ contract MultiSigWallet {
         address creator,
         uint groupId,
         uint batchId,
-        string name,
+        string regNo,
         Cert[] certs
     );
 
     event BatchConfirmed(
         address confirmer,
-        uint batchId
+        uint batchId,
+        string regNo
     );
 
     event BatchAdded(
         uint batchId,
+        string regNo,
         uint[] certIds
     );
 
@@ -277,32 +282,29 @@ contract MultiSigWallet {
         emit CertPending(
             msg.sender,
             _cert.id,
-            _cert.schoolId,
-            _cert.studentId,
-            _cert.subjectId,
-            _cert.semester,
-            _cert.grade,
-            _cert.gradeType,
+            _cert.regNo,
             _cert.batchId
         );
         confirmCert(_groupId, _cert.id);
         return _cert.id;
     }
 
-    function submitBatch(uint _groupId, string memory _batchName, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
+    function submitBatch(uint _groupId, Batch memory _batch, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
         uint batchId = batchCount++;
-        batches[batchId] = new uint[](_certs.length);
+        _batch.id = batchId;
+        batches[batchId] = _batch;
+        batchCerts[batchId] = new uint[](_certs.length);
         for (uint i = 0; i < _certs.length; i++) {
             _certs[i].id = certCount++;
             uint certId = _certs[i].id;
             certs[certId] = _certs[i];
-            batches[batchId][i] = certId;
+            batchCerts[batchId][i] = certId;
         }
         emit BatchPending(
             msg.sender,
             _groupId,
             batchId,
-            _batchName,
+            _batch.name,
             _certs
         );
         confirmBatch(_groupId, batchId);
@@ -312,19 +314,21 @@ contract MultiSigWallet {
     function confirmCert(uint _groupId, uint _certId) onlyGroup(_groupId) public {
         require(certConfirmed[_groupId][_certId][msg.sender] == false);
         certConfirmed[_groupId][_certId][msg.sender] = true;
-        emit CertConfirmed(msg.sender, _certId);
+        Cert memory cert = certs[_certId];
+        emit CertConfirmed(msg.sender, _certId, cert.regNo, cert.batchId);
         executeCert(_groupId, _certId);
     }
 
     function confirmBatch(uint _groupId, uint _batchId) onlyGroup(_groupId) public {
         require(batchConfirmed[_groupId][_batchId][msg.sender] == false);
         batchConfirmed[_groupId][_batchId][msg.sender] = true;
-        for (uint i = 0; i < batches[_batchId].length; i++) {
-            uint certId = batches[_batchId][i];
+        for (uint i = 0; i < batchCerts[_batchId].length; i++) {
+            uint certId = batchCerts[_batchId][i];
             certConfirmed[_groupId][certId][msg.sender] = true;
-            emit CertConfirmed(msg.sender, certId);
+            Cert memory cert = certs[certId];
+            emit CertConfirmed(msg.sender, certId, cert.regNo, cert.batchId);
         }
-        emit BatchConfirmed(msg.sender, _batchId);
+        emit BatchConfirmed(msg.sender, _batchId, batches[_batchId].name);
         executeBatch(_groupId, _batchId);
     }
 
@@ -337,12 +341,7 @@ contract MultiSigWallet {
         certExecuted[_certId] = true;
         emit CertAdded(
             cert.id,
-            cert.schoolId,
-            cert.studentId,
-            cert.subjectId,
-            cert.semester,
-            cert.grade,
-            cert.gradeType,
+            cert.regNo,
             cert.batchId
         );
     }
@@ -351,30 +350,27 @@ contract MultiSigWallet {
         require(batchExecuted[_batchId] == false);
         require(isBatchConfirmed(_groupId, _batchId));
         address[] memory confirmers = getBatchConfirmers(_groupId, _batchId);
-        Cert[] memory batchCerts = new Cert[](batches[_batchId].length);
-        for (uint i = 0; i < batches[_batchId].length; i++) {
-            uint certId = batches[_batchId][i];
+        uint currentCertCount = batchCerts[_batchId].length;
+        Cert[] memory currentCerts = new Cert[](currentCertCount);
+        for (uint i = 0; i < currentCertCount; i++) {
+            uint certId = batchCerts[_batchId][i];
             certs[certId].issuers = confirmers;
-            batchCerts[i] = certs[certId];
+            currentCerts[i] = certs[certId];
         }
-        holder.addCerts(batchCerts);
+        holder.addCerts(currentCerts);
         batchExecuted[_batchId] = true;
-        for (uint i = 0; i < batchCerts.length; i++) {
-            Cert memory cert = batchCerts[i];
+        for (uint i = 0; i < currentCertCount; i++) {
+            Cert memory cert = currentCerts[i];
             emit CertAdded(
                 cert.id,
-                cert.schoolId,
-                cert.studentId,
-                cert.subjectId,
-                cert.semester,
-                cert.grade,
-                cert.gradeType,
+                cert.regNo,
                 cert.batchId
             );
         }
         emit BatchAdded(
             _batchId,
-            batches[_batchId]
+            batches[_batchId].name,
+            batchCerts[_batchId]
         );
     }
 }
