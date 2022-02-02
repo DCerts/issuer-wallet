@@ -32,6 +32,7 @@ contract MultiSigWallet {
         address[] members;
         uint threshold;
         address[] confirmedBy;
+        address[] rejectedBy;
     }
 
     struct Batch {
@@ -86,6 +87,7 @@ contract MultiSigWallet {
     }
 
     modifier onlyGroup(uint _groupId) {
+        require(isGroupRejected(_groupId) == false);
         require(isGroupConfirmed(_groupId));
         require(isMemberOfGroup(msg.sender, _groupId));
         _;
@@ -111,11 +113,20 @@ contract MultiSigWallet {
         uint groupId
     );
 
+    event GroupRejected(
+        address rejecter,
+        uint groupId
+    );
+
     event GroupAdded(
         uint groupId,
         string name,
         address[] members,
         uint threshold
+    );
+
+    event GroupRemoved(
+        uint groupId
     );
 
     event CertPending(
@@ -132,10 +143,21 @@ contract MultiSigWallet {
         uint batchId
     );
 
+    event CertRejected(
+        address rejecter,
+        uint certId,
+        string regNo,
+        uint batchId
+    );
+
     event CertAdded(
         uint certId,
         string regNo,
         uint batchId
+    );
+
+    event CertRemoved(
+        uint certId
     );
 
     event BatchPending(
@@ -152,10 +174,20 @@ contract MultiSigWallet {
         string regNo
     );
 
+    event BatchRejected(
+        address rejecter,
+        uint batchId,
+        string regNo
+    );
+
     event BatchAdded(
         uint batchId,
         string regNo,
         uint[] certIds
+    );
+
+    event BatchRemoved(
+        uint batchId
     );
 
     event Deposit(address from, uint value);
@@ -183,6 +215,24 @@ contract MultiSigWallet {
         emit WalletActivated(_name, _members, _threshold, _address);
     }
 
+    function isGroupConfirmedBy(uint _groupId, address _member) public view returns (bool) {
+        for (uint i = 0; i < groups[_groupId].confirmedBy.length; i++) {
+            if (groups[_groupId].confirmedBy[i] == _member) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isGroupRejectedBy(uint _groupId, address _member) public view returns (bool) {
+        for (uint i = 0; i < groups[_groupId].rejectedBy.length; i++) {
+            if (groups[_groupId].rejectedBy[i] == _member) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function isGroupConfirmed(uint _groupId) private view returns (bool) {
         uint confirmedCount = 0;
         for (uint i = 0; i < groups[_groupId].confirmedBy.length; i++) {
@@ -191,6 +241,16 @@ contract MultiSigWallet {
             }
         }
         return confirmedCount >= threshold;
+    }
+
+    function isGroupRejected(uint _groupId) private view returns (bool) {
+        uint rejectedCount = 0;
+        for (uint i = 0; i < groups[_groupId].rejectedBy.length; i++) {
+            if (groups[_groupId].rejectedBy[i] != address(0)) {
+                rejectedCount++;
+            }
+        }
+        return rejectedCount >= threshold;
     }
 
     function addGroup(string memory _name, address[] memory _members, uint _threshold) onlyMembers public returns (uint) {
@@ -203,7 +263,8 @@ contract MultiSigWallet {
             name: _name,
             members: _members,
             threshold: _threshold,
-            confirmedBy: new address[](members.length)
+            confirmedBy: new address[](members.length),
+            rejectedBy: new address[](members.length)
         });
         group.confirmedBy[0] = msg.sender;
         groups[groupId] = group;
@@ -213,7 +274,9 @@ contract MultiSigWallet {
     }
 
     function confirmGroup(uint _groupId) onlyMembers public {
+        require(isGroupRejected(_groupId) == false);
         require(isGroupConfirmed(_groupId) == false);
+        require(isGroupRejectedBy(_groupId, msg.sender) == false);
         address[] memory groupConfirmers = groups[_groupId].confirmedBy;
         uint confirmerCount = 0;
         for (uint i = 0; i < groupConfirmers.length; i++) {
@@ -233,6 +296,27 @@ contract MultiSigWallet {
                 groups[_groupId].members,
                 groups[_groupId].threshold
             );
+        }
+    }
+
+    function rejectGroup(uint _groupId) onlyMembers public {
+        require(isGroupConfirmed(_groupId) == false);
+        require(isGroupRejected(_groupId) == false);
+        require(isGroupConfirmedBy(_groupId, msg.sender) == false);
+        address[] memory groupRejecters = groups[_groupId].rejectedBy;
+        uint rejecterCount = 0;
+        for (uint i = 0; i < groupRejecters.length; i++) {
+            if (groupRejecters[i] == msg.sender) {
+                require(false);
+            }
+            if (groupRejecters[i] != address(0)) {
+                rejecterCount++;
+            }
+        }
+        groups[_groupId].rejectedBy[rejecterCount] = msg.sender;
+        emit GroupRejected(msg.sender, _groupId);
+        if (isGroupRejected(_groupId)) {
+            emit GroupRemoved(_groupId);
         }
     }
 
