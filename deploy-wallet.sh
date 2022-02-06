@@ -1,2 +1,2 @@
 #!/bin/bash
-truffle migrate --reset --network ropsten
+truffle migrate --reset --network rinkeby

@@ -7,6 +7,7 @@ struct Cert {
     address schoolId;
     string regNo;
     uint batchId;
+    string batchRegNo;
     string conferredOn;
     string dateOfBirth;
     string yearOfGraduation;
@@ -373,13 +374,18 @@ contract MultiSigWallet {
         return _cert.id;
     }
 
-    function submitBatch(uint _groupId, Batch memory _batch, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
+    function submitBatch(uint _groupId, string memory _batchName, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
         uint batchId = batchCount++;
-        _batch.id = batchId;
-        batches[batchId] = _batch;
+        Batch memory batch = Batch({
+            id: batchId,
+            name: _batchName
+        });
+        batches[batchId] = batch;
         batchCerts[batchId] = new uint[](_certs.length);
         for (uint i = 0; i < _certs.length; i++) {
             _certs[i].id = certCount++;
+            _certs[i].batchId = batchId;
+            _certs[i].batchRegNo = _batchName;
             uint certId = _certs[i].id;
             certs[certId] = _certs[i];
             batchCerts[batchId][i] = certId;
@@ -388,7 +394,7 @@ contract MultiSigWallet {
             msg.sender,
             _groupId,
             batchId,
-            _batch.name,
+            _batchName,
             _certs
         );
         confirmBatch(_groupId, batchId);
