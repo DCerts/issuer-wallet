@@ -48,7 +48,7 @@ contract MultiSigWallet {
 
     mapping(uint => Group) groups;
 
-    mapping(uint => Batch) batches; // batchId => batchName
+    mapping(uint => Batch) batches; // batchId => batch
     mapping(uint => Cert) certs; // certId => cert
     mapping(uint => bool) certExecuted; // certId => executed
     mapping(uint => mapping(uint => mapping(address => bool))) certConfirmed; // groupId => certId => member => confirmed
@@ -88,7 +88,6 @@ contract MultiSigWallet {
     }
 
     modifier onlyGroup(uint _groupId) {
-        require(isGroupRejected(_groupId) == false);
         require(isGroupConfirmed(_groupId));
         require(isMemberOfGroup(msg.sender, _groupId));
         _;
@@ -234,7 +233,7 @@ contract MultiSigWallet {
         return false;
     }
 
-    function isGroupConfirmed(uint _groupId) private view returns (bool) {
+    function isGroupConfirmed(uint _groupId) public view returns (bool) {
         uint confirmedCount = 0;
         for (uint i = 0; i < groups[_groupId].confirmedBy.length; i++) {
             if (groups[_groupId].confirmedBy[i] != address(0)) {
@@ -244,7 +243,7 @@ contract MultiSigWallet {
         return confirmedCount >= threshold;
     }
 
-    function isGroupRejected(uint _groupId) private view returns (bool) {
+    function isGroupRejected(uint _groupId) public view returns (bool) {
         uint rejectedCount = 0;
         for (uint i = 0; i < groups[_groupId].rejectedBy.length; i++) {
             if (groups[_groupId].rejectedBy[i] != address(0)) {
@@ -326,11 +325,12 @@ contract MultiSigWallet {
     }
 
     function getCertConfirmers(uint _groupId, uint _certId) private view returns (address[] memory) {
-        address[] memory confirmers;
+        address[] memory groupMembers = groups[_groupId].members;
+        address[] memory confirmers = new address[](groupMembers.length);
         uint count = 0;
-        for (uint i = 0; i < members.length; i++) {
-            if (certConfirmed[_groupId][_certId][members[i]]) {
-                confirmers[count] = members[i];
+        for (uint i = 0; i < groupMembers.length; i++) {
+            if (certConfirmed[_groupId][_certId][groupMembers[i]]) {
+                confirmers[count] = groupMembers[i];
                 count++;
             }
         }
@@ -338,55 +338,42 @@ contract MultiSigWallet {
     }
 
     function getBatchConfirmers(uint _groupId, uint _batchId) private view returns (address[] memory) {
-        address[] memory confirmers;
+        address[] memory groupMembers = groups[_groupId].members;
+        address[] memory confirmers = new address[](groupMembers.length);
         uint count = 0;
-        for (uint i = 0; i < members.length; i++) {
-            if (batchConfirmed[_groupId][_batchId][members[i]]) {
-                confirmers[count] = members[i];
+        for (uint i = 0; i < groupMembers.length; i++) {
+            if (batchConfirmed[_groupId][_batchId][groupMembers[i]]) {
+                confirmers[count] = groupMembers[i];
                 count++;
             }
         }
         return confirmers;
     }
 
-    function isCertConfirmed(uint _groupId, uint _certId) public view returns (bool) {
-        address[] memory confirmers = getCertConfirmers(_groupId, _certId);
-        uint count = confirmers.length;
-        return count >= groups[_groupId].threshold;
-    }
-
     function isBatchConfirmed(uint _groupId, uint _batchId) public view returns (bool) {
         address[] memory confirmers = getBatchConfirmers(_groupId, _batchId);
-        uint count = confirmers.length;
+        uint count = 0;
+        for (uint i = 0; i < confirmers.length; i++) {
+            if (confirmers[i] != address(0)) {
+                count++;
+            }
+        }
         return count >= groups[_groupId].threshold;
-    }
-
-    function submitCert(uint _groupId, Cert memory _cert) onlyGroup(_groupId) public returns (uint) {
-        _cert.id = certCount++;
-        certs[_cert.id] = _cert;
-        emit CertPending(
-            msg.sender,
-            _cert.id,
-            _cert.regNo,
-            _cert.batchId
-        );
-        confirmCert(_groupId, _cert.id);
-        return _cert.id;
     }
 
     function submitBatch(uint _groupId, string memory _batchName, Cert[] memory _certs) onlyGroup(_groupId) public returns (uint) {
         uint batchId = batchCount++;
-        Batch memory batch = Batch({
+        batches[batchId] = Batch({
             id: batchId,
             name: _batchName
         });
-        batches[batchId] = batch;
         batchCerts[batchId] = new uint[](_certs.length);
         for (uint i = 0; i < _certs.length; i++) {
-            _certs[i].id = certCount++;
+            uint certId = certCount++;
+            _certs[i].id = certId;
             _certs[i].batchId = batchId;
             _certs[i].batchRegNo = _batchName;
-            uint certId = _certs[i].id;
+            _certs[i].issuers = new address[](groups[_groupId].members.length);
             certs[certId] = _certs[i];
             batchCerts[batchId][i] = certId;
         }
@@ -401,14 +388,6 @@ contract MultiSigWallet {
         return batchId;
     }
 
-    function confirmCert(uint _groupId, uint _certId) onlyGroup(_groupId) public {
-        require(certConfirmed[_groupId][_certId][msg.sender] == false);
-        certConfirmed[_groupId][_certId][msg.sender] = true;
-        Cert memory cert = certs[_certId];
-        emit CertConfirmed(msg.sender, _certId, cert.regNo, cert.batchId);
-        executeCert(_groupId, _certId);
-    }
-
     function confirmBatch(uint _groupId, uint _batchId) onlyGroup(_groupId) public {
         require(batchConfirmed[_groupId][_batchId][msg.sender] == false);
         batchConfirmed[_groupId][_batchId][msg.sender] = true;
@@ -419,26 +398,13 @@ contract MultiSigWallet {
             emit CertConfirmed(msg.sender, certId, cert.regNo, cert.batchId);
         }
         emit BatchConfirmed(msg.sender, _batchId, batches[_batchId].name);
-        executeBatch(_groupId, _batchId);
-    }
-
-    function executeCert(uint _groupId, uint _certId) onlyGroup(_groupId) private {
-        require(certExecuted[_certId] == false);
-        require(isCertConfirmed(_groupId, _certId));
-        certs[_certId].issuers = getCertConfirmers(_groupId, _certId);
-        Cert memory cert = certs[_certId];
-        holder.addCert(cert);
-        certExecuted[_certId] = true;
-        emit CertAdded(
-            cert.id,
-            cert.regNo,
-            cert.batchId
-        );
+        if (isBatchConfirmed(_groupId, _batchId)) {
+            executeBatch(_groupId, _batchId);
+        }
     }
 
     function executeBatch(uint _groupId, uint _batchId) onlyGroup(_groupId) private {
         require(batchExecuted[_batchId] == false);
-        require(isBatchConfirmed(_groupId, _batchId));
         address[] memory confirmers = getBatchConfirmers(_groupId, _batchId);
         uint currentCertCount = batchCerts[_batchId].length;
         Cert[] memory currentCerts = new Cert[](currentCertCount);
